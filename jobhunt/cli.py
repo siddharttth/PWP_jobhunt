@@ -227,7 +227,7 @@ def cmd_applied(args) -> int:
 
 
 def cmd_apply(args) -> int:
-    """Pre-fill one application in a visible browser. The human submits."""
+    """Pre-fill applications in a browser, record what was answered, mail a summary."""
     cfg = _cfg(args.config)
     profile = _load_profile(cfg, allow_sample=False)
     if profile is None:
@@ -237,32 +237,72 @@ def cmd_apply(args) -> int:
         print(f"missing {path} — copy applicant.example.json and fill it in")
         return 1
     applicant = json.loads(path.read_text(encoding="utf-8"))
+    store = Store(cfg.get("seen_file", "seen.json"))
 
-    try:
-        form = apply_mod.fetch_form(args.job_id)
-        provider, model = resolve("screen")
-        print(f"{form['title']} @ {form['company']}\n{form['url']}\n")
-        answers = apply_mod.answer_questions(
-            form["questions"], applicant, profile, form["title"], provider, model)
-    except (LLMError, ValueError) as e:
-        print(f"apply failed: {e}")
+    job_ids = list(args.job_ids)
+    if args.all:
+        threshold = float(cfg.get("score_threshold", 7.0))
+        job_ids += [jid for jid, row in store.data.items()
+                    if jid.startswith("greenhouse:") and jid not in job_ids
+                    and (row.get("score") or 0) >= threshold and not row.get("applied")]
+    if not job_ids:
+        print("nothing to apply to — pass a job_id, or --all for the unapplied shortlist")
         return 1
 
-    labels = {q["name"]: q["label"] for q in form["questions"]}
-    for name, a in answers.items():
-        mark = "  " if a["answer"] else "!!"
-        print(f"  {mark} {labels[name][:58]:<58} {a['answer'] or '(you fill this in)'}")
-    if args.dry_run:
-        return 0
-
     try:
-        result = apply_mod.fill_form(form, answers, applicant)
-    except RuntimeError as e:
+        provider, model = resolve("screen")
+    except LLMError as e:
         print(e)
         return 1
-    print(f"\nfilled {len(result['filled'])} fields in {result['seconds']}s, "
-          f"left {len(result['skipped']) + len(result['failed'])} for you")
-    print(f"if you submitted it: python -m jobhunt applied \"{args.job_id}\"")
+
+    entries = []
+    for job_id in job_ids:
+        try:
+            form = apply_mod.fetch_form(job_id)
+            print(f"\n{form['title']} @ {form['company']}\n{form['url']}")
+            answers = apply_mod.answer_questions(
+                form["questions"], applicant, profile, form["title"], provider, model)
+        except (LLMError, ValueError) as e:
+            print(f"\n! {job_id}: {e}")
+            continue
+
+        qa = [{"label": q["label"], "required": q["required"],
+               "answer": (Path(str(applicant.get("resume_path") or "")).name
+                          if q["name"] == "resume" else
+                          (answers.get(q["name"]) or {}).get("answer", ""))}
+              for q in form["questions"]]
+        for row in qa:
+            mark = "  " if row["answer"] else "!!"
+            print(f"  {mark} {row['label'][:58]:<58} {row['answer'] or '(blank)'}")
+
+        entry = {"job_id": job_id, "title": form["title"], "company": form["company"],
+                 "url": form["url"], "qa": qa, "submitted": False,
+                 "note": "answers only, form not opened"}
+        if not args.dry_run:
+            try:
+                result = apply_mod.fill_form(
+                    form, answers, applicant, headless=args.preview, hold=not args.preview,
+                    screenshot=f"out/apply-{job_id.replace(':', '-')}.png" if args.preview else None)
+            except RuntimeError as e:
+                print(e)
+                return 1
+            entry.update(submitted=result["submitted"], note=result["note"])
+            print(f"  filled {len(result['filled'])} fields in {result['seconds']}s — "
+                  f"{'SUBMITTED' if result['submitted'] else result['note']}")
+            store.record_application(entry)
+        entries.append(entry)
+
+    if not entries:
+        return 1
+    subject, doc = apply_mod.summary(entries)
+    out = digest_mod.write(doc, cfg.get("applications_file", "out/applications.html"))
+    print(f"\n{subject}\nsummary: {out}")
+    if args.send:
+        try:
+            mailer.send(subject, doc)
+        except Exception as e:
+            print(f"  ! email failed ({type(e).__name__}: {e}) — summary still on disk")
+    store.export_csv(cfg.get("tracker_csv", "out/tracker.csv"))
     return 0
 
 
@@ -302,9 +342,14 @@ def main(argv=None) -> int:
     sa.set_defaults(func=cmd_applied)
 
     sy = sub.add_parser("apply", help="pre-fill a greenhouse application; you submit")
-    sy.add_argument("job_id")
+    sy.add_argument("job_ids", nargs="*", help="job ids from the digest")
+    sy.add_argument("--all", action="store_true",
+                    help="every unapplied greenhouse job at or above score_threshold")
     sy.add_argument("--dry-run", action="store_true",
                     help="print the answers, do not open a browser")
+    sy.add_argument("--preview", action="store_true",
+                    help="fill in a hidden browser and save a screenshot")
+    sy.add_argument("--send", action="store_true", help="email the summary")
     sy.set_defaults(func=cmd_apply)
 
     ss = sub.add_parser("stats", help="tracker summary + CSV export")

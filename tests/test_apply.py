@@ -60,3 +60,31 @@ def test_an_answer_outside_the_offered_options_is_left_for_the_human():
     assert answers["first_name"]["source"] == "needs_input"
     assert answers["question_1"] == {"answer": "", "source": "needs_input"}
     assert answers["question_2"] == {"answer": "", "source": "needs_input"}
+
+
+def test_summary_counts_only_real_submissions_and_shows_blanks():
+    qa = [{"label": "Notice <Period>", "required": True, "answer": ""},
+          {"label": "Current CTC", "required": True, "answer": "5 LPA"}]
+    entries = [
+        {"job_id": "greenhouse:x:1", "title": "SDE", "company": "X",
+         "url": "https://example.com", "submitted": True, "note": "", "qa": qa},
+        {"job_id": "greenhouse:x:2", "title": "SDE 2", "company": "X",
+         "url": "https://example.com", "submitted": False, "note": "filled, you did not submit", "qa": qa},
+    ]
+    subject, doc = apply.summary(entries)
+
+    assert subject.startswith("Applied to 1 of 2 jobs")
+    assert "Notice &lt;Period&gt; *" in doc and "left blank" in doc and "5 LPA" in doc
+    assert "filled, you did not submit" in doc
+
+
+def test_recording_an_application_marks_applied_only_when_submitted(tmp_path):
+    from jobhunt.store import Store
+    store = Store(tmp_path / "seen.json")
+    base = {"title": "SDE", "company": "X", "url": "u", "note": "", "qa": []}
+    store.record_application({**base, "job_id": "greenhouse:x:1", "submitted": True})
+    store.record_application({**base, "job_id": "greenhouse:x:2", "submitted": False})
+
+    assert store.data["greenhouse:x:1"]["applied"] is True
+    assert store.data["greenhouse:x:2"]["applied"] is False
+    assert store.stats()["applied"] == 1

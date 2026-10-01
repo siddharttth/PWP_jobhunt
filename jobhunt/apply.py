@@ -10,9 +10,11 @@ is exact instead of guessed from page text.
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +86,9 @@ def fetch_form(job_id: str) -> dict:
     body = r.json()
     return {
         "url": body.get("absolute_url") or "",
+        # `absolute_url` can be the company's own careers page with the form
+        # buried in an iframe. The embed URL is always the bare Greenhouse form.
+        "form_url": f"https://job-boards.greenhouse.io/embed/job_app?for={slug}&token={gh_id}",
         "title": (body.get("title") or "").strip(),
         "company": body.get("company_name") or slug,
         "description": body.get("content") or "",
@@ -148,13 +153,18 @@ def answer_questions(questions: list[dict], applicant: dict, profile: dict,
     return answers
 
 
+_CONFIRMED = re.compile(r"thank you for applying|application (has been |was )?"
+                        r"(submitted|received)", re.I)
+
+
 def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
               headless: bool = False, screenshot: str | Path | None = None,
               hold: bool = True) -> dict[str, Any]:
     """Open the form and fill it. Never clicks submit.
 
-    Returns {filled, skipped, failed, seconds}. With `hold`, the browser stays
-    open until the human closes it — that is where review and submit happen.
+    Returns {filled, skipped, failed, seconds, submitted, note}. With `hold`,
+    the browser stays open until the human closes it — that is where review
+    and submit happen, and `submitted` reports whether they pressed it.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -163,13 +173,27 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
             "pip install playwright && python -m playwright install chromium") from None
 
     by_name = {q["name"]: q for q in form["questions"]}
-    result: dict[str, Any] = {"filled": [], "skipped": [], "failed": []}
+    result: dict[str, Any] = {"filled": [], "skipped": [], "failed": [],
+                              "submitted": False, "note": ""}
     started = time.time()
+    visited: list[str] = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         page = browser.new_page(viewport={"width": 1100, "height": 900})
-        page.goto(form["url"], wait_until="networkidle")
+        page.on("framenavigated",
+                lambda f: visited.append(f.url) if f == page.main_frame else None)
+        page.set_default_timeout(5000)
+        page.goto(form.get("form_url") or form["url"], wait_until="networkidle",
+                  timeout=30000)
+
+        def confirmed() -> bool:
+            if any("confirmation" in u for u in visited):
+                return True
+            try:
+                return bool(_CONFIRMED.search(page.locator("body").inner_text(timeout=2000)))
+            except Exception:
+                return False
 
         def combobox(selector: str, label: str) -> None:
             box = page.locator(selector)
@@ -217,6 +241,60 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
         if hold and not headless:
             print("  form is filled. Review it, complete the blanks, solve the "
                   "CAPTCHA and submit.\n  Close the browser window when done.")
-            page.wait_for_event("close", timeout=0)
-        browser.close()
+            while not page.is_closed():
+                if confirmed():
+                    result["submitted"] = True
+                try:
+                    page.wait_for_timeout(700)
+                except Exception:  # window closed mid-wait
+                    break
+            result["note"] = "" if result["submitted"] else "filled, you did not submit"
+        else:
+            result["note"] = "filled as a preview, not submitted"
+        if not page.is_closed():
+            browser.close()
     return result
+
+
+# ---------------------------------------------------------------- summary ---
+
+def summary(entries: list[dict]) -> tuple[str, str]:
+    """Email of what was applied to, with every field asked and answered.
+
+    Each entry: {job_id, title, company, url, submitted, note, qa:[{label,
+    answer, required}]}.
+    """
+    today = datetime.now().strftime("%d %b %Y")
+    sent = sum(1 for e in entries if e["submitted"])
+    subject = (f"Applied to {sent} of {len(entries)} job"
+               f"{'s' if len(entries) != 1 else ''} — {today}")
+    cards = []
+    for e in entries:
+        rows = "".join(
+            f'<tr><td style="padding:6px 10px 6px 0;color:#8b93a3;font-size:13px;'
+            f'vertical-align:top;width:52%;">{html.escape(q["label"])}'
+            f'{" *" if q["required"] else ""}</td>'
+            f'<td style="padding:6px 0;color:{"#e6e8ec" if q["answer"] else "#d29922"};'
+            f'font-size:13px;vertical-align:top;">'
+            f'{html.escape(q["answer"]) or "left blank"}</td></tr>' for q in e["qa"])
+        status = ("Submitted" if e["submitted"] else html.escape(e["note"] or "Not submitted"))
+        color = "#3fb950" if e["submitted"] else "#d29922"
+        cards.append(
+            f'<div style="background:#171a21;border:1px solid #262b36;border-radius:12px;'
+            f'padding:18px;margin-bottom:14px;">'
+            f'<a href="{html.escape(e["url"])}" style="color:#7c9cff;font-size:16px;'
+            f'font-weight:700;text-decoration:none;">{html.escape(e["title"])}</a>'
+            f'<div style="color:#8b93a3;font-size:13px;margin-top:4px;">'
+            f'{html.escape(e["company"])} · {html.escape(e["job_id"])}</div>'
+            f'<div style="color:{color};font-size:13px;font-weight:700;margin-top:8px;">'
+            f'{status}</div>'
+            f'<table style="border-collapse:collapse;width:100%;margin-top:10px;">{rows}</table>'
+            f'</div>')
+    doc = (f'<!doctype html><html><body style="margin:0;padding:20px;background:#0f1115;'
+           f"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;\">"
+           f'<div style="max-width:640px;margin:0 auto;">'
+           f'<div style="color:#e6e8ec;font-size:22px;font-weight:800;">Application summary</div>'
+           f'<div style="color:#8b93a3;font-size:13px;margin:6px 0 20px 0;">{today} · '
+           f'{sent} submitted · {len(entries) - sent} not submitted · * required field</div>'
+           f'{"".join(cards)}</div></body></html>')
+    return subject, doc
