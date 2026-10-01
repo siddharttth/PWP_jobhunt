@@ -261,7 +261,8 @@ def cmd_apply(args) -> int:
             form = apply_mod.fetch_form(job_id)
             print(f"\n{form['title']} @ {form['company']}\n{form['url']}")
             answers = apply_mod.answer_questions(
-                form["questions"], applicant, profile, form["title"], provider, model)
+                form["questions"], applicant, profile, form["title"], provider, model,
+                job_description=form["description"])
         except (LLMError, ValueError) as e:
             print(f"\n! {job_id}: {e}")
             continue
@@ -273,7 +274,9 @@ def cmd_apply(args) -> int:
               for q in form["questions"]]
         for row in qa:
             mark = "  " if row["answer"] else "!!"
-            print(f"  {mark} {row['label'][:58]:<58} {row['answer'] or '(blank)'}")
+            shown = " ".join(row["answer"].split())
+            print(f"  {mark} {row['label'][:58]:<58} "
+                  f"{(shown[:70] + '…' if len(shown) > 70 else shown) or '(blank)'}")
 
         entry = {"job_id": job_id, "title": form["title"], "company": form["company"],
                  "url": form["url"], "qa": qa, "submitted": False,

@@ -21,14 +21,16 @@ from typing import Any
 import requests
 
 from . import llm
-from .fetch import TIMEOUT, UA
+from .fetch import TIMEOUT, UA, strip_html
 from .providers import Provider
 
 ANSWER_MAX_TOKENS = 4000
 
 # Answered straight from applicant.json — no model call, no chance of drift.
 DIRECT_FIELDS = ("first_name", "last_name", "email", "phone")
-FILE_FIELDS = ("resume", "cover_letter")
+FILE_FIELDS = ("resume",)
+COVER_LETTER = "cover_letter_text"
+JD_CHARS = 6000
 
 APPLICANT_PROMPT = """Extract the applicant's contact details from this resume.
 
@@ -48,19 +50,33 @@ state — never guess:
 
 ANSWER_SYSTEM = """You fill in a job application form for one applicant.
 
-Hard rule: never invent a fact. Every answer must come from APPLICANT DETAILS
-or the CANDIDATE PROFILE. If neither supports an answer, return an empty
-`answer` with `source` "needs_input" — a blank the human fills in is fine, a
-wrong answer sent to a recruiter is not.
+Questions come in two kinds. Treat them differently.
+
+FACTS about the applicant — pay, notice period, location, employer, links,
+years of experience, visa or sponsorship status, legal agreements, past
+employment at this company, certifications held. Answer only from APPLICANT
+DETAILS or the CANDIDATE PROFILE. Never invent or assume one: if neither states
+it, return an empty `answer` with `source` "needs_input". A blank the human
+fills in is fine, a wrong fact sent to a recruiter is not.
+
+WRITING — a cover letter, "why this role", "describe a project", "tell us
+about yourself", anything asking for prose. Write it, tailored to the JOB
+DESCRIPTION, using only real experience from the profile, with `source`
+"generated". Plain and concrete: no "I am writing to express my interest", no
+"I am excited to", no flattery about the company. A cover letter is 120-160
+words and opens with a concrete reason the applicant fits this role; other
+written answers are 2-4 sentences.
 
 For a question with `options`, `answer` must be exactly one of the option
 labels. Answer yes/no questions truthfully even when the truthful answer hurts
 the application (e.g. "3+ years of experience?" for a 1.5-year candidate is No).
 
-Keep free-text answers short and factual, the way a person types into a form.
+Leave an optional question blank when the honest answer is "nothing to add".
+Keep factual answers short, the way a person types into a form.
 
 Return ONLY a JSON array, one object per question, no prose:
-[{"name": str, "answer": str, "source": "details" | "profile" | "needs_input"}]
+[{"name": str, "answer": str,
+  "source": "details" | "profile" | "generated" | "needs_input"}]
 Echo `name` back exactly as given."""
 
 
@@ -102,9 +118,9 @@ def flatten_questions(questions: list[dict]) -> list[dict]:
     for q in questions:
         for f in q.get("fields") or []:
             name = f.get("name") or ""
-            # The *_text twins of the file fields are paste-in alternatives to
-            # an upload; the upload is what gets used.
-            if name in ("resume_text", "cover_letter_text"):
+            # Each file field has a paste-in twin. The resume goes up as a
+            # file; the cover letter is written per job, so it is pasted.
+            if name in ("resume_text", "cover_letter"):
                 continue
             out.append({
                 "name": name,
@@ -117,7 +133,8 @@ def flatten_questions(questions: list[dict]) -> list[dict]:
 
 
 def answer_questions(questions: list[dict], applicant: dict, profile: dict,
-                     job_title: str, provider: Provider, model: str) -> dict[str, dict]:
+                     job_title: str, provider: Provider, model: str,
+                     job_description: str = "") -> dict[str, dict]:
     """Field name -> {answer, source}. Standard fields skip the model."""
     answers: dict[str, dict] = {}
     for_model = []
@@ -138,6 +155,7 @@ def answer_questions(questions: list[dict], applicant: dict, profile: dict,
             f"APPLICANT DETAILS:\n{json.dumps(applicant, ensure_ascii=False)}\n\n"
             f"CANDIDATE PROFILE:\n{json.dumps(profile, ensure_ascii=False)}\n\n"
             f"APPLYING FOR: {job_title}\n\n"
+            f"JOB DESCRIPTION:\n{strip_html(job_description)[:JD_CHARS]}\n\n"
             f"QUESTIONS:\n{json.dumps(for_model, ensure_ascii=False)}",
             ANSWER_MAX_TOKENS, json_mode=True)
         got = {str(r.get("name")): r for r in llm._as_list(llm.parse_json(raw))}
@@ -226,7 +244,11 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
                 continue
             selector = f'[id="{name}"]'
             try:
-                if q["options"]:
+                if name == COVER_LETTER:
+                    # The textarea only exists after "Enter manually".
+                    page.locator('button[data-testid="cover_letter-text"]').click()
+                    page.locator(selector).fill(a["answer"])
+                elif q["options"]:
                     combobox(selector, a["answer"])
                 else:
                     page.locator(selector).fill(a["answer"])

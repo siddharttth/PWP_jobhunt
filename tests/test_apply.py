@@ -15,6 +15,9 @@ QUESTIONS = [
     {"label": "Resume/CV", "required": True,
      "fields": [{"name": "resume", "type": "input_file", "values": []},
                 {"name": "resume_text", "type": "textarea", "values": []}]},
+    {"label": "Cover Letter", "required": False,
+     "fields": [{"name": "cover_letter", "type": "input_file", "values": []},
+                {"name": "cover_letter_text", "type": "textarea", "values": []}]},
     {"label": "What is your Notice Period?", "required": True,
      "fields": [{"name": "question_1", "type": "input_text", "values": []}]},
     {"label": "Do you have 3+ years of experience?", "required": True,
@@ -34,9 +37,18 @@ class Stub:
         return json.dumps(self.reply)
 
 
-def test_flatten_drops_the_paste_in_twin_of_the_resume_upload():
+def test_flatten_uploads_the_resume_and_pastes_the_cover_letter():
     names = [q["name"] for q in apply.flatten_questions(QUESTIONS)]
-    assert names == ["first_name", "resume", "question_1", "question_2"]
+    assert names == ["first_name", "resume", "cover_letter_text", "question_1", "question_2"]
+
+
+def test_the_job_description_reaches_the_model_with_tags_stripped():
+    stub = Stub([{"name": "cover_letter_text", "answer": "I built X.", "source": "generated"}])
+    answers = apply.answer_questions(apply.flatten_questions(QUESTIONS), {}, {}, "SDE",
+                                     stub, "m", job_description="<p>Builds &amp; ships Go</p>")
+
+    assert "Builds & ships Go" in stub.sent and "<p>" not in stub.sent
+    assert answers["cover_letter_text"] == {"answer": "I built X.", "source": "generated"}
 
 
 def test_standard_fields_come_from_the_file_and_never_reach_the_model():
