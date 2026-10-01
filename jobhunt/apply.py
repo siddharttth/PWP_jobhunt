@@ -62,7 +62,8 @@ fills in is fine, a wrong fact sent to a recruiter is not.
 WRITING — a cover letter, "why this role", "describe a project", "tell us
 about yourself", anything asking for prose. Write it, tailored to the JOB
 DESCRIPTION, using only real experience from the profile, with `source`
-"generated". Plain and concrete: no "I am writing to express my interest", no
+"generated". Always in the first person ("I built", never "Siddharth built"
+or "he built") — the applicant is the one sending it. Plain and concrete: no "I am writing to express my interest", no
 "I am excited to", no flattery about the company. A cover letter is 120-160
 words and opens with a concrete reason the applicant fits this role; other
 written answers are 2-4 sentences.
@@ -109,6 +110,9 @@ def fetch_form(job_id: str) -> dict:
         "company": body.get("company_name") or slug,
         "description": body.get("content") or "",
         "questions": flatten_questions(body.get("questions") or []),
+        # A city picker some boards add. Like country, it is on the form but
+        # not in `questions`.
+        "asks_location": bool(body.get("location_questions")),
     }
 
 
@@ -280,6 +284,19 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
                 result["filled"].append("country")
             except Exception as e:
                 result["failed"].append(f"country ({type(e).__name__})")
+
+        city = str(applicant.get("current_location") or "")
+        if page.locator("#candidate-location").count():
+            try:
+                # Typed, not filled: the suggestions load per keystroke.
+                box = page.locator("#candidate-location")
+                box.click()
+                box.press_sequentially(city, delay=60)
+                page.locator('[id^="react-select-candidate-location-option"]'
+                             ).first.click(timeout=6000)
+                result["filled"].append("location (city)")
+            except Exception as e:
+                result["failed"].append(f"Location (City) ({type(e).__name__})")
 
         resume = Path(str(applicant.get("resume_path") or ""))
         if resume.is_file() and page.locator("#resume").count():

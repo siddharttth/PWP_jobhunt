@@ -272,6 +272,9 @@ def cmd_apply(args) -> int:
                           if q["name"] == "resume" else
                           (answers.get(q["name"]) or {}).get("answer", ""))}
               for q in form["questions"]]
+        if form.get("asks_location"):
+            qa.append({"label": "Location (City)", "required": True,
+                       "answer": str(applicant.get("current_location") or "")})
         for row in qa:
             mark = "  " if row["answer"] else "!!"
             shown = " ".join(row["answer"].split())
