@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from . import digest as digest_mod
+from . import apply as apply_mod
 from . import llm, mailer
 from .fetch import fetch_all
 from .mock import fetch_all_mock
@@ -225,6 +226,46 @@ def cmd_applied(args) -> int:
     return 0 if ok else 1
 
 
+def cmd_apply(args) -> int:
+    """Pre-fill one application in a visible browser. The human submits."""
+    cfg = _cfg(args.config)
+    profile = _load_profile(cfg, allow_sample=False)
+    if profile is None:
+        return 1
+    path = Path(cfg.get("applicant_file", "applicant.json"))
+    if not path.exists():
+        print(f"missing {path} — copy applicant.example.json and fill it in")
+        return 1
+    applicant = json.loads(path.read_text(encoding="utf-8"))
+
+    try:
+        form = apply_mod.fetch_form(args.job_id)
+        provider, model = resolve("screen")
+        print(f"{form['title']} @ {form['company']}\n{form['url']}\n")
+        answers = apply_mod.answer_questions(
+            form["questions"], applicant, profile, form["title"], provider, model)
+    except (LLMError, ValueError) as e:
+        print(f"apply failed: {e}")
+        return 1
+
+    labels = {q["name"]: q["label"] for q in form["questions"]}
+    for name, a in answers.items():
+        mark = "  " if a["answer"] else "!!"
+        print(f"  {mark} {labels[name][:58]:<58} {a['answer'] or '(you fill this in)'}")
+    if args.dry_run:
+        return 0
+
+    try:
+        result = apply_mod.fill_form(form, answers, applicant)
+    except RuntimeError as e:
+        print(e)
+        return 1
+    print(f"\nfilled {len(result['filled'])} fields in {result['seconds']}s, "
+          f"left {len(result['skipped']) + len(result['failed'])} for you")
+    print(f"if you submitted it: python -m jobhunt applied \"{args.job_id}\"")
+    return 0
+
+
 def cmd_stats(args) -> int:
     cfg = _cfg(args.config)
     store = Store(cfg.get("seen_file", "seen.json"))
@@ -259,6 +300,12 @@ def main(argv=None) -> int:
     sa = sub.add_parser("applied", help="mark a job_id as applied")
     sa.add_argument("job_id")
     sa.set_defaults(func=cmd_applied)
+
+    sy = sub.add_parser("apply", help="pre-fill a greenhouse application; you submit")
+    sy.add_argument("job_id")
+    sy.add_argument("--dry-run", action="store_true",
+                    help="print the answers, do not open a browser")
+    sy.set_defaults(func=cmd_apply)
 
     ss = sub.add_parser("stats", help="tracker summary + CSV export")
     ss.set_defaults(func=cmd_stats)

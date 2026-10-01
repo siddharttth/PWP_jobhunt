@@ -9,3 +9,7 @@ anthropic>=0.40
 
 # Tests
 pytest>=8.0
+
+# Only needed for `python -m jobhunt apply` (assisted apply). After installing:
+#   python -m playwright install chromium
+playwright>=1.45

@@ -1,0 +1,18 @@
+{
+  "first_name": "Sample",
+  "last_name": "Candidate",
+  "email": "you@example.com",
+  "phone": "+91 9000000000",
+  "linkedin": "https://linkedin.com/in/your-handle",
+  "github": "https://github.com/your-handle",
+  "website": "",
+  "current_employer": "Acme",
+  "current_location": "Bangalore",
+  "country": "India",
+  "resume_path": "resume.pdf",
+  "current_ctc": "5 LPA",
+  "expected_ctc": "8 LPA",
+  "notice_period": "30 days",
+  "willing_to_relocate": "Yes, anywhere in India",
+  "preferred_name": "Sample"
+}
