@@ -7,11 +7,12 @@ from email.message import EmailMessage
 
 
 def send(subject: str, html_body: str) -> None:
-    host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    port = int(os.getenv("SMTP_PORT", "587"))
+    # `or`, not a getenv default: CI passes unset secrets as empty strings.
+    host = os.getenv("SMTP_HOST") or "smtp.gmail.com"
+    port = int(os.getenv("SMTP_PORT") or "587")
     user = os.environ["SMTP_USER"]
     password = os.environ["SMTP_PASS"]
-    to_addr = os.getenv("MAIL_TO", user)
+    to_addr = os.getenv("MAIL_TO") or user
 
     msg = EmailMessage()
     msg["Subject"] = subject
