@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import base64
 import os
+import time
 from typing import Any
 
 import requests
 
 TIMEOUT = 120
+RETRY_STATUS = (429, 500, 503)
+RETRY_WAITS = (5, 20, 45)   # seconds between attempts
 
 
 class LLMError(RuntimeError):
@@ -125,12 +128,19 @@ class GeminiProvider(Provider):
     BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
     def _post(self, model: str, body: dict) -> str:
-        r = requests.post(
-            f"{self.BASE}/{model}:generateContent",
-            params={"key": self._env("GEMINI_API_KEY")},
-            json=body,
-            timeout=TIMEOUT,
-        )
+        # The free tier answers 429/503 under load. Those clear in seconds, and
+        # giving up on the first one costs a draft that is never retried.
+        for wait in (*RETRY_WAITS, None):
+            r = requests.post(
+                f"{self.BASE}/{model}:generateContent",
+                params={"key": self._env("GEMINI_API_KEY")},
+                json=body,
+                timeout=TIMEOUT,
+            )
+            if r.status_code not in RETRY_STATUS or wait is None:
+                break
+            print(f"  gemini HTTP {r.status_code}, retrying in {wait}s")
+            time.sleep(wait)
         if r.status_code != 200:
             raise LLMError(f"gemini HTTP {r.status_code}: {r.text[:300]}")
         try:
@@ -257,7 +267,7 @@ PROVIDERS = {
 # after setting nothing but a key.
 DEFAULT_MODELS = {
     "anthropic": {"screen": "claude-haiku-4-5-20251001", "draft": "claude-sonnet-5"},
-    "gemini": {"screen": "gemini-2.0-flash", "draft": "gemini-2.0-flash"},
+    "gemini": {"screen": "gemini-3.5-flash-lite", "draft": "gemini-3.6-flash"},
     "groq": {"screen": "llama-3.3-70b-versatile", "draft": "llama-3.3-70b-versatile"},
     "openai-compatible": {"screen": "gpt-4o-mini", "draft": "gpt-4o"},
     "ollama": {"screen": "llama3.1", "draft": "llama3.1"},

@@ -170,8 +170,8 @@ python -m jobhunt stats                                 # + CSV export
 
 ## Scheduling
 
-[`.github/workflows/daily.yml`](.github/workflows/daily.yml) runs it at 06:00 IST
-on weekdays. `seen.json` is carried between runs with `actions/cache`, not
+[`.github/workflows/daily.yml`](.github/workflows/daily.yml) runs it at 08:00 IST
+every day. `seen.json` is carried between runs with `actions/cache`, not
 committed — it's personal, and a `seen.json` in the repo would mark every job as
 already-seen for anyone who cloned it. Nothing personal ever enters git.
 

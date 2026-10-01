@@ -76,10 +76,36 @@ def _card(j: Job) -> str:
 </div>"""
 
 
-def build(jobs: list[Job], scanned: int, candidates: int, stats: dict) -> tuple[str, str]:
+def _near_miss_row(j: Job) -> str:
+    meta = " · ".join(x for x in [j.company, j.location or "—"] if x)
+    return (f'<div style="padding:12px 0;border-top:1px solid {LINE};">'
+            f'<div>{_badge(j.score)} <a href="{html.escape(j.url)}" style="color:{ACCENT};'
+            f'font-size:15px;font-weight:700;text-decoration:none;margin-left:6px;">'
+            f'{html.escape(j.title)}</a></div>'
+            f'<div style="color:{MUTED};font-size:13px;margin-top:5px;">{html.escape(meta)}</div>'
+            f'<div style="color:{TEXT};font-size:13px;line-height:1.5;margin-top:5px;">'
+            f'{html.escape(j.reason or "")}</div></div>')
+
+
+def _near_misses(jobs: list[Job]) -> str:
+    if not jobs:
+        return ""
+    return (f'<div style="background:{CARD};border:1px solid {LINE};border-radius:12px;'
+            f'padding:18px 18px 6px 18px;margin-bottom:14px;">'
+            f'<div style="color:{TEXT};font-size:15px;font-weight:700;">Close calls</div>'
+            f'<div style="color:{MUTED};font-size:12px;margin:4px 0 12px 0;">'
+            f'Just under the bar, no draft written. Worth a look on a thin day.</div>'
+            f'{"".join(_near_miss_row(j) for j in jobs)}</div>')
+
+
+def build(jobs: list[Job], scanned: int, candidates: int, stats: dict,
+          near_misses: list[Job] | tuple = ()) -> tuple[str, str]:
     today = datetime.now().strftime("%d %b %Y")
     subject = (f"{len(jobs)} job{'s' if len(jobs) != 1 else ''} worth your time — {today}"
-               if jobs else f"No new matches today — {today}")
+               if jobs else
+               f"No strong matches, {len(near_misses)} close call"
+               f"{'s' if len(near_misses) != 1 else ''} — {today}"
+               if near_misses else f"No new matches today — {today}")
 
     if jobs:
         body = "".join(_card(j) for j in jobs)
@@ -98,6 +124,7 @@ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
     tracker: {stats.get('tracked', 0)} seen · {stats.get('applied', 0)} applied
   </div>
   {body}
+  {_near_misses(list(near_misses))}
   <div style="color:{MUTED};font-size:11px;line-height:1.6;margin-top:18px;
        border-top:1px solid {LINE};padding-top:14px;">
     Drafts are starting points, not send-ready. Read the JD, edit the note,

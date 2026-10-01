@@ -22,7 +22,8 @@ class Store:
     def unseen(self, jobs: list[Job]) -> list[Job]:
         return [j for j in jobs if j.job_id not in self.data]
 
-    def record(self, jobs: list[Job], emailed: bool) -> None:
+    def record(self, jobs: list[Job], emailed_ids: frozenset[str] | set[str] = frozenset()) -> None:
+        """`emailed_ids` are the jobs that actually went out in a sent digest."""
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         for j in jobs:
             self.data.setdefault(j.job_id, {
@@ -33,7 +34,7 @@ class Store:
                 "url": j.url,
                 "score": j.score,
                 "reason": j.reason,
-                "emailed": emailed,
+                "emailed": j.job_id in emailed_ids,
                 "applied": False,
                 "applied_on": None,
             })

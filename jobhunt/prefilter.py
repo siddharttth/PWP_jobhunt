@@ -10,11 +10,32 @@ from datetime import datetime, timedelta, timezone
 
 from .fetch import Job
 
-REMOTE_HINTS = ("remote", "anywhere", "work from home", "wfh", "distributed")
+# "distributed" is deliberately absent: the haystack includes the title, and
+# "Distributed Systems Engineer" in an office is not a remote role.
+REMOTE_HINTS = ("remote", "anywhere", "work from home", "wfh")
 
 
 def _any_match(patterns: list[str], text: str) -> bool:
     return any(re.search(p, text, re.I) for p in patterns)
+
+
+def _has_term(term: str, text: str) -> bool:
+    """Whole-word match, so `india` does not match "Indianapolis"."""
+    return re.search(rf"(?<![a-z]){re.escape(term)}(?![a-z])", text) is not None
+
+
+def _remote_ok(location: str, regions: list[str]) -> bool:
+    """Is this remote role open to the candidate's region?
+
+    "Remote - USA" reads as remote but cannot be worked from India. With
+    `remote_regions` set, a remote role passes only if its location names one
+    of them or names nowhere at all (a bare "Remote").
+    """
+    if not regions:
+        return True
+    loc = location.lower()
+    bare = not re.sub(r"remote|[\W_]+", "", loc)
+    return bare or any(_has_term(r, loc) for r in regions)
 
 
 def _parse_date(value: str | None) -> datetime | None:
@@ -35,6 +56,7 @@ def prefilter(jobs: list[Job], cfg: dict) -> list[Job]:
     exc = cfg.get("exclude_titles") or []
     locs = [l.lower() for l in (cfg.get("locations") or [])]
     allow_remote = bool(cfg.get("allow_remote", True))
+    remote_regions = [r.lower() for r in (cfg.get("remote_regions") or [])]
     max_age = cfg.get("max_age_days")
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_age) if max_age else None
 
@@ -46,8 +68,9 @@ def prefilter(jobs: list[Job], cfg: dict) -> list[Job]:
 
         if locs:
             hay = f"{j.location} {j.title}".lower()
-            is_remote = allow_remote and any(h in hay for h in REMOTE_HINTS)
-            if not is_remote and not any(l in hay for l in locs):
+            is_remote = (allow_remote and any(h in hay for h in REMOTE_HINTS)
+                         and _remote_ok(j.location, remote_regions))
+            if not is_remote and not any(_has_term(l, hay) for l in locs):
                 stats["location"] += 1
                 continue
 

@@ -186,3 +186,54 @@ def test_allow_remote_is_what_lets_an_out_of_region_remote_role_through():
 def test_empty_filters_keep_everything():
     jobs = fetch_all_mock()
     assert len(prefilter(jobs, {})) == len(jobs)
+
+
+def _job(location: str, title: str = "Backend Engineer"):
+    from jobhunt.fetch import Job
+    return Job(job_id=f"lever:x:{location}", ats="lever", company="X", title=title,
+               location=location, url="https://example.com", description="Go")
+
+
+@pytest.mark.parametrize("location,kept", [
+    ("Remote - USA", False),
+    ("Remote, Canada; Remote, United States", False),
+    ("Remote", True),
+    ("Remote, Global", True),
+    ("Remote - India", True),
+])
+def test_remote_regions_gate_remote_roles_by_where_they_can_be_worked(location, kept):
+    cfg = {"locations": ["bangalore", "india"], "allow_remote": True,
+           "remote_regions": ["india", "global"]}
+    assert bool(prefilter([_job(location)], cfg)) is kept
+
+
+def test_location_is_a_whole_word_match_and_title_is_not_a_remote_hint():
+    cfg = {"locations": ["india"], "allow_remote": True}
+    assert prefilter([_job("Indianapolis, Indiana")], cfg) == []
+    assert prefilter([_job("Belgrade, Serbia", "Distributed Systems Engineer")], cfg) == []
+
+
+# ------------------------------------------------------------------ store ---
+
+def test_store_marks_only_the_sent_shortlist_as_emailed(tmp_path):
+    from jobhunt.store import Store
+    a, b = _job("Bangalore"), _job("Bengaluru")
+    store = Store(tmp_path / "seen.json")
+    store.record([a, b], emailed_ids={a.job_id})
+
+    assert store.stats() == {"tracked": 2, "emailed": 1, "applied": 0}
+    assert store.unseen([a, b]) == []
+
+
+# ----------------------------------------------------------------- digest ---
+
+def test_digest_lists_close_calls_without_counting_them_as_matches():
+    from jobhunt import digest
+    near = _job("Bangalore", "Backend Engineer <Search>")
+    near.score, near.reason = 6.0, "plausible but wants more tenure"
+
+    subject, doc = digest.build([], 100, 10, {}, near_misses=[near])
+
+    assert subject.startswith("No strong matches, 1 close call ")
+    assert "Close calls" in doc and "Backend Engineer &lt;Search&gt;" in doc
+    assert "Close calls" not in digest.build([], 100, 10, {})[1]

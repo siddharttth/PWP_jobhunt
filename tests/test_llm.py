@@ -352,3 +352,24 @@ def test_both_stages_ask_for_json_mode_and_leave_room_for_thinking():
 def test_providers_without_document_support_say_so():
     with pytest.raises(providers.UnsupportedDocument):
         providers.GroqProvider().complete_document("m", "prompt", b"%PDF", 100)
+
+
+def test_draft_falls_back_to_the_second_model_when_the_first_is_down():
+    from jobhunt.providers import LLMError
+
+    class Down:
+        name = "down"
+        def complete(self, *a, **k):
+            raise LLMError("gemini HTTP 503")
+
+    class Up:
+        name = "up"
+        def complete(self, *a, **k):
+            return '{"fit_summary": "fits", "cover_note": "note"}'
+
+    job = Job(job_id="lever:x:1", ats="lever", company="X", title="Backend Engineer",
+              location="Bangalore", url="https://example.com", description="Go")
+    llm.draft([job], {}, provider=Down(), model="big", fallback=(Up(), "small"))
+
+    assert job.draft["fit_summary"] == "fits"
+    assert set(job.draft) == set(llm.DRAFT_KEYS)

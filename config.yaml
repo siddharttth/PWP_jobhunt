@@ -21,20 +21,17 @@ filters:
     - 'site reliability engineer'
     - '\bsre\b'
     - 'member of technical staff'
-    # systems / networking track — matches your DPDK, packet-processing and
-    # kernel background. Drop these if you widen away from low-level work.
-    - '\bnetwork(ing)?\s+(software\s+)?engineer\b'
-    - '\b(kernel|embedded|firmware|driver|packet|dataplane|data plane)\b.*\bengineer\b'
-    - '\bengineer\b.*\b(kernel|packet|dataplane|networking|performance)\b'
-    - '\bperformance engineer\b'
-    - '\bsystems engineer\b'
-    - '\bc\+\+\b.*\bengineer\b'
-    - '\bengineer\b.*\bc\+\+\b'
+    # backend / AI track — matches the Python, Golang and GenAI-pipeline
+    # background in profile.json.
+    - '\b(backend|back-end|software|python|golang|go|api)\s+developer\b'
+    - '\b(ai|ml|ai/ml|genai|generative ai|llm|machine learning|applied ai)\b.*\bengineer\b'
+    - '\bfull[\s-]?stack\b.*\b(engineer|developer)\b'
 
   # Anything matching these is dropped even if an include matched.
   exclude_titles:
-    - '\b(staff|principal|distinguished|fellow|architect)\b'      # too senior for now
-    # "Senior" at 2.5 years is a consistent 3-4 from the screener — dropping it
+    - '\b(staff|principal|distinguished|fellow|architect|lead)\b' # too senior for now
+    - '\b(sr\.?|iii|iv|3|4|l[4-9])\b'                             # SDE III / L4 and up
+    # "Senior" at 1.5 years is a consistent 3-4 from the screener — dropping it
     # here is free, dropping it after an LLM call is not. Delete this line once
     # you are ~4 years in, or if you want to stretch-apply anyway.
     - '\bsenior\b'
@@ -48,12 +45,44 @@ filters:
   # Substrings matched against "<location> <title>", case-insensitive.
   # Leave empty to accept every location.
   locations:
+    - india
+    # Open to relocating anywhere in India. Boards often give a bare city
+    # with no country, so the major hubs are listed by name as well.
     - bangalore
     - bengaluru
-    - india
+    - hyderabad
+    - pune
+    - mumbai
+    - navi mumbai
+    - delhi
+    - new delhi
+    - ncr
+    - gurgaon
+    - gurugram
+    - noida
+    - chennai
+    - kolkata
+    - ahmedabad
+    - jaipur
+    - kochi
+    - coimbatore
+    - indore
+    - chandigarh
+    - thiruvananthapuram
 
   # If true, anything reading as remote passes the location gate.
   allow_remote: true
+
+  # Remote roles pass only if their location names one of these, or names
+  # nowhere at all (a bare "Remote"). Without this, "Remote - USA" gets through
+  # and costs a screening call to reject. Leave empty to accept any remote role.
+  remote_regions:
+    - india
+    - global
+    - worldwide
+    - anywhere
+    - apac
+    - asia
 
   # Drop postings older than this. Set to null to disable.
   # Boards often re-stamp `updated_at`, so this is a soft signal, not a promise.
@@ -65,6 +94,8 @@ screen_jd_chars: 1400     # JD truncation for screening
 draft_jd_chars: 6000      # JD truncation for drafting
 score_threshold: 7.0      # below this, no draft and no digest slot
 max_per_digest: 5         # hard cap on expensive draft calls per run
+near_miss_margin: 1.5     # list jobs this far under the threshold as "close
+                          # calls" (no draft). 0 turns the section off.
 
 # --- paths ------------------------------------------------------------------
 companies_file: companies.yaml

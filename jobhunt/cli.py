@@ -157,6 +157,17 @@ def cmd_run(args) -> int:
                        key=lambda j: j.score or 0, reverse=True)[:top_n]
     print(f"  {len(shortlist)} scored >= {threshold}")
 
+    # Scored just under the bar: listed in the digest without a draft, so a
+    # strict screener on a thin day still leaves something to look at.
+    margin = float(cfg.get("near_miss_margin", 0))
+    picked = {j.job_id for j in shortlist}
+    near_misses = sorted(
+        [j for j in jobs if j.job_id not in picked
+         and threshold - margin <= (j.score or 0) < threshold],
+        key=lambda j: j.score or 0, reverse=True)[:top_n] if margin else []
+    if near_misses:
+        print(f"  {len(near_misses)} close calls ({threshold - margin} to {threshold})")
+
     # ---- 4. draft
     print(f"\n[4/5] drafting kits for {len(shortlist)}")
     if not shortlist:
@@ -169,13 +180,15 @@ def cmd_run(args) -> int:
             print(f"  via {provider.name}/{model}")
             llm.draft(shortlist, profile,
                       jd_chars=int(cfg.get("draft_jd_chars", 6000)),
-                      provider=provider, model=model)
+                      provider=provider, model=model,
+                      fallback=resolve("screen"))
         except LLMError as e:
             print(f"  ! drafting unavailable: {e}")
 
     # ---- 5. digest
     print("\n[5/5] digest")
-    subject, doc = digest_mod.build(shortlist, scanned, candidates, store.stats())
+    subject, doc = digest_mod.build(shortlist, scanned, candidates, store.stats(),
+                                    near_misses=near_misses)
     path = digest_mod.write(doc, cfg.get("digest_file", "out/digest.html"))
     print(f"  wrote {path}")
 
@@ -189,7 +202,12 @@ def cmd_run(args) -> int:
     else:
         print("  --send not passed, email skipped")
 
-    store.record(jobs, emailed=sent)
+    # A job a failed batch never scored stays unrecorded, so the next run
+    # retries it instead of treating it as already seen.
+    scored = [j for j in jobs if j.score is not None]
+    if len(scored) < len(jobs):
+        print(f"  {len(jobs) - len(scored)} unscored jobs left for the next run")
+    store.record(scored, emailed_ids={j.job_id for j in shortlist} if sent else frozenset())
     csv_path = store.export_csv(cfg.get("tracker_csv", "out/tracker.csv"))
 
     print(f"\nfunnel: {scanned} scanned -> {passed_filters} passed filters "

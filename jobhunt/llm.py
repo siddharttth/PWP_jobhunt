@@ -221,21 +221,33 @@ Return ONLY a JSON object, no prose:
 
 
 def draft(jobs: list[Job], profile: dict, jd_chars: int = 6000,
-          provider: Provider | None = None, model: str | None = None) -> list[Job]:
-    """Stage 2: full kit for the shortlist. One call per job, best model."""
+          provider: Provider | None = None, model: str | None = None,
+          fallback: tuple[Provider, str] | None = None) -> list[Job]:
+    """Stage 2: full kit for the shortlist. One call per job, best model.
+
+    `fallback` is a second (provider, model) tried when the first is down. A
+    shortlisted job is recorded as seen either way, so a draft lost to an
+    outage is never retried: a kit from the cheaper model beats no kit.
+    """
     if provider is None or model is None:
         provider, model = resolve("draft")
     profile_blob = json.dumps(profile, ensure_ascii=False)
 
     for j in jobs:
         try:
-            raw = provider.complete(
-                model, DRAFT_SYSTEM,
-                f"CANDIDATE PROFILE:\n{profile_blob}\n\n"
-                f"JOB: {j.title} at {j.company} ({j.location or 'location not stated'})\n"
-                f"URL: {j.url}\n\n{j.description[:jd_chars]}",
-                DRAFT_MAX_TOKENS, json_mode=True,
-            )
+            user = (f"CANDIDATE PROFILE:\n{profile_blob}\n\n"
+                    f"JOB: {j.title} at {j.company} ({j.location or 'location not stated'})\n"
+                    f"URL: {j.url}\n\n{j.description[:jd_chars]}")
+            try:
+                raw = provider.complete(model, DRAFT_SYSTEM, user,
+                                        DRAFT_MAX_TOKENS, json_mode=True)
+            except LLMError as e:
+                if not fallback or fallback == (provider, model):
+                    raise
+                print(f"  ! {provider.name}/{model} unavailable ({str(e)[:60].strip()}), "
+                      f"falling back to {fallback[0].name}/{fallback[1]}")
+                raw = fallback[0].complete(fallback[1], DRAFT_SYSTEM, user,
+                                           DRAFT_MAX_TOKENS, json_mode=True)
             kit = parse_json(raw)
             if not isinstance(kit, dict):
                 raise ValueError("draft did not return a JSON object")

@@ -23,16 +23,34 @@
 # noise and makes the prefilter counts impossible to reason about.
 
 companies:
-  - {ats: greenhouse, slug: stripe,      name: Stripe}
-  - {ats: greenhouse, slug: databricks,  name: Databricks}
-  - {ats: greenhouse, slug: cloudflare,  name: Cloudflare}
-  - {ats: greenhouse, slug: figma,       name: Figma}
-  - {ats: greenhouse, slug: dropbox,     name: Dropbox}
-  - {ats: greenhouse, slug: coinbase,    name: Coinbase}
-  - {ats: greenhouse, slug: reddit,      name: Reddit}
-  - {ats: lever,      slug: voleon,      name: Voleon}
+  - {ats: greenhouse, slug: razorpaysoftwareprivatelimited, name: Razorpay}
+  - {ats: greenhouse, slug: groww, name: Groww}
+  - {ats: greenhouse, slug: atomicwork, name: Atomicwork}
+  - {ats: greenhouse, slug: getwellnetwork, name: Get Well Network}
+  - {ats: greenhouse, slug: bswiftindia, name: bswift India}
+  - {ats: lever, slug: cred, name: CRED}
+  - {ats: lever, slug: gushwork, name: Gushwork}
+  - {ats: lever, slug: safe, name: Safe Security}
+  - {ats: lever, slug: acceldata, name: Acceldata}
+  - {ats: lever, slug: epifi, name: Fi Money}
+  - {ats: lever, slug: valgenesis, name: ValGenesis}
+  - {ats: lever, slug: netomi, name: Netomi}
+  - {ats: lever, slug: meesho, name: Meesho}
+  - {ats: lever, slug: nium, name: Nium}
 
-  - {ats: ashby,      slug: openai,      name: OpenAI}
-  - {ats: ashby,      slug: ramp,        name: Ramp}
-  - {ats: ashby,      slug: linear,      name: Linear}
-  - {ats: ashby,      slug: vanta,       name: Vanta}
+  # Added 2026-10-02: boards checked live and carrying India or global-remote
+  # engineering roles on that date.
+  - {ats: greenhouse, slug: gitlab, name: GitLab}
+  - {ats: greenhouse, slug: databricks, name: Databricks}
+  - {ats: greenhouse, slug: coinbase, name: Coinbase}
+  - {ats: greenhouse, slug: stripe, name: Stripe}
+  - {ats: greenhouse, slug: observeai, name: Observe.AI}
+  - {ats: greenhouse, slug: turing, name: Turing}
+  - {ats: greenhouse, slug: inmobi, name: InMobi}
+  - {ats: greenhouse, slug: glance, name: Glance}
+  - {ats: greenhouse, slug: okta, name: Okta}
+  - {ats: greenhouse, slug: togetherai, name: Together AI}
+  - {ats: lever, slug: gohighlevel, name: HighLevel}
+  - {ats: lever, slug: hevodata, name: Hevo Data}
+  - {ats: lever, slug: fampay, name: FamPay}
+  - {ats: ashby, slug: supabase, name: Supabase}
