@@ -192,6 +192,35 @@ def missing_required(form: dict, answers: dict[str, dict], applicant: dict) -> l
     return missing
 
 
+def _why_not(page) -> str:
+    """Say what the form is showing after a submit that did not confirm."""
+    body = ""
+    try:
+        body = page.locator("body").inner_text(timeout=2000)
+    except Exception:
+        pass
+    if re.search(r"security code|verification code", body, re.I):
+        return ("the form asked for a security code emailed to you — open the "
+                "link, enter the code and submit")
+    try:
+        if page.locator('iframe[title*="challenge"]').first.is_visible(timeout=500):
+            return "a CAPTCHA challenge appeared — open the link and finish it"
+    except Exception:
+        pass
+    errors = []
+    try:
+        for text in page.locator('[role="alert"], [id$="-error"], [class*="error"]'
+                                 ).all_inner_texts():
+            text = " ".join(text.split())
+            if text and text not in errors:
+                errors.append(text)
+    except Exception:
+        pass
+    if errors:
+        return "the form rejected it: " + "; ".join(errors)[:300]
+    return "no confirmation page after clicking submit — open the link and check"
+
+
 def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
               headless: bool = False, screenshot: str | Path | None = None,
               hold: bool = True, submit: bool = False) -> dict[str, Any]:
@@ -295,9 +324,7 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
                     page.wait_for_timeout(500)
                 result["submitted"] = confirmed()
                 if not result["submitted"]:
-                    result["note"] = ("not submitted: no confirmation after clicking "
-                                      "submit (CAPTCHA, security code or a form "
-                                      "error) — open the link and finish it")
+                    result["note"] = "not submitted: " + _why_not(page)
                 if screenshot:
                     page.screenshot(path=str(screenshot), full_page=True)
         elif hold and not headless:
