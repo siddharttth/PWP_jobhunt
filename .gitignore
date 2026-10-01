@@ -32,7 +32,3 @@ env/
 .idea/
 .DS_Store
 Thumbs.db
-
-# your contact details and form answers for assisted apply
-applicant.json
-!applicant.example.json

@@ -14,7 +14,6 @@ from pathlib import Path
 import yaml
 
 from . import digest as digest_mod
-from . import apply as apply_mod
 from . import llm, mailer
 from .fetch import fetch_all
 from .mock import fetch_all_mock
@@ -226,94 +225,6 @@ def cmd_applied(args) -> int:
     return 0 if ok else 1
 
 
-def cmd_apply(args) -> int:
-    """Pre-fill applications in a browser, record what was answered, mail a summary."""
-    cfg = _cfg(args.config)
-    profile = _load_profile(cfg, allow_sample=False)
-    if profile is None:
-        return 1
-    path = Path(cfg.get("applicant_file", "applicant.json"))
-    if not path.exists():
-        print(f"missing {path} — copy applicant.example.json and fill it in")
-        return 1
-    applicant = json.loads(path.read_text(encoding="utf-8"))
-    store = Store(cfg.get("seen_file", "seen.json"))
-
-    job_ids = list(args.job_ids)
-    if args.all:
-        threshold = float(cfg.get("score_threshold", 7.0))
-        job_ids += [jid for jid, row in store.data.items()
-                    if jid.startswith(("greenhouse:", "lever:")) and jid not in job_ids
-                    and (row.get("score") or 0) >= threshold and not row.get("applied")]
-    if not job_ids:
-        print("nothing to apply to — pass a job_id, or --all for the unapplied shortlist")
-        return 1
-
-    try:
-        provider, model = resolve("screen")
-    except LLMError as e:
-        print(e)
-        return 1
-
-    entries = []
-    for job_id in job_ids:
-        try:
-            form = apply_mod.fetch_form(job_id)
-            print(f"\n{form['title']} @ {form['company']}\n{form['url']}")
-            answers = apply_mod.answer_questions(
-                form["questions"], applicant, profile, form["title"], provider, model,
-                job_description=form["description"])
-        except (LLMError, ValueError, RuntimeError) as e:
-            print(f"\n! {job_id}: {e}")
-            continue
-
-        qa = [{"label": q["label"], "required": q["required"],
-               "answer": (Path(str(applicant.get("resume_path") or "")).name
-                          if q["name"] == "resume" else
-                          (answers.get(q["name"]) or {}).get("answer", ""))}
-              for q in form["questions"]]
-        if form.get("asks_location"):
-            qa.append({"label": "Location (City)", "required": True,
-                       "answer": str(applicant.get("current_location") or "")})
-        for row in qa:
-            mark = "  " if row["answer"] else "!!"
-            shown = " ".join(row["answer"].split())
-            print(f"  {mark} {row['label'][:58]:<58} "
-                  f"{(shown[:70] + '…' if len(shown) > 70 else shown) or '(blank)'}")
-
-        entry = {"job_id": job_id, "title": form["title"], "company": form["company"],
-                 "url": form["url"], "qa": qa, "submitted": False,
-                 "note": "answers only, form not opened"}
-        if not args.dry_run:
-            try:
-                result = apply_mod.fill_form(
-                    form, answers, applicant, headless=args.preview, hold=not args.preview,
-                    submit=args.submit and not args.preview,
-                    screenshot=f"out/apply-{job_id.replace(':', '-')}.png"
-                    if args.preview or args.submit else None)
-            except RuntimeError as e:
-                print(e)
-                return 1
-            entry.update(submitted=result["submitted"], note=result["note"])
-            print(f"  filled {len(result['filled'])} fields in {result['seconds']}s — "
-                  f"{'SUBMITTED' if result['submitted'] else result['note']}")
-            store.record_application(entry)
-        entries.append(entry)
-
-    if not entries:
-        return 1
-    subject, doc = apply_mod.summary(entries)
-    out = digest_mod.write(doc, cfg.get("applications_file", "out/applications.html"))
-    print(f"\n{subject}\nsummary: {out}")
-    if args.send:
-        try:
-            mailer.send(subject, doc)
-        except Exception as e:
-            print(f"  ! email failed ({type(e).__name__}: {e}) — summary still on disk")
-    store.export_csv(cfg.get("tracker_csv", "out/tracker.csv"))
-    return 0
-
-
 def cmd_stats(args) -> int:
     cfg = _cfg(args.config)
     store = Store(cfg.get("seen_file", "seen.json"))
@@ -348,19 +259,6 @@ def main(argv=None) -> int:
     sa = sub.add_parser("applied", help="mark a job_id as applied")
     sa.add_argument("job_id")
     sa.set_defaults(func=cmd_applied)
-
-    sy = sub.add_parser("apply", help="fill greenhouse/lever applications in a browser")
-    sy.add_argument("job_ids", nargs="*", help="job ids from the digest")
-    sy.add_argument("--all", action="store_true",
-                    help="every unapplied greenhouse/lever job at or above score_threshold")
-    sy.add_argument("--dry-run", action="store_true",
-                    help="print the answers, do not open a browser")
-    sy.add_argument("--preview", action="store_true",
-                    help="fill in a hidden browser and save a screenshot")
-    sy.add_argument("--submit", action="store_true",
-                    help="press submit when every required field is answered")
-    sy.add_argument("--send", action="store_true", help="email the summary")
-    sy.set_defaults(func=cmd_apply)
 
     ss = sub.add_parser("stats", help="tracker summary + CSV export")
     ss.set_defaults(func=cmd_stats)

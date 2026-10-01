@@ -48,20 +48,6 @@ class Store:
         self.save()
         return True
 
-    def record_application(self, entry: dict) -> None:
-        """Keep what was asked and answered, and mark applied if it went out."""
-        row = self.data.setdefault(entry["job_id"], {
-            "first_seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "company": entry["company"], "title": entry["title"], "location": "",
-            "url": entry["url"], "score": None, "reason": None,
-            "emailed": False, "applied": False, "applied_on": None,
-        })
-        row["application"] = {"submitted": entry["submitted"], "note": entry["note"],
-                              "qa": entry["qa"]}
-        self.save()
-        if entry["submitted"]:
-            self.mark_applied(entry["job_id"])
-
     def stats(self) -> dict:
         return {
             "tracked": len(self.data),
