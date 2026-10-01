@@ -325,6 +325,20 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
                 result["submitted"] = confirmed()
                 if not result["submitted"]:
                     result["note"] = "not submitted: " + _why_not(page)
+                    # The form is filled and the code is in the human's inbox:
+                    # keep the window so finishing is one code and one click,
+                    # not a second run.
+                    if not headless and hold:
+                        print(f"  {result['note']}\n  Finish it in the open window, "
+                              "or close the window to skip this job.")
+                        while not page.is_closed():
+                            if confirmed():
+                                result["submitted"], result["note"] = True, ""
+                                break
+                            try:
+                                page.wait_for_timeout(700)
+                            except Exception:  # window closed mid-wait
+                                break
                 if screenshot:
                     page.screenshot(path=str(screenshot), full_page=True)
         elif hold and not headless:
