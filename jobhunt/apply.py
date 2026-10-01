@@ -175,10 +175,32 @@ _CONFIRMED = re.compile(r"thank you for applying|application (has been |was )?"
                         r"(submitted|received)", re.I)
 
 
+SUBMIT_WAIT_S = 25
+
+
+def missing_required(form: dict, answers: dict[str, dict], applicant: dict) -> list[str]:
+    """Labels of required fields that would go out empty."""
+    missing = []
+    for q in form["questions"]:
+        if not q["required"]:
+            continue
+        if q["name"] == "resume":
+            if not Path(str(applicant.get("resume_path") or "")).is_file():
+                missing.append(q["label"])
+        elif not (answers.get(q["name"]) or {}).get("answer"):
+            missing.append(q["label"])
+    return missing
+
+
 def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
               headless: bool = False, screenshot: str | Path | None = None,
-              hold: bool = True) -> dict[str, Any]:
-    """Open the form and fill it. Never clicks submit.
+              hold: bool = True, submit: bool = False) -> dict[str, Any]:
+    """Open the form and fill it. Clicks submit only when `submit` is set.
+
+    `submit` presses the button once, and only when every required field has
+    an answer and every fill succeeded. It does nothing about a CAPTCHA
+    challenge or an emailed security code: without a confirmation page the
+    application is reported as not submitted and left for the human.
 
     Returns {filled, skipped, failed, seconds, submitted, note}. With `hold`,
     the browser stays open until the human closes it — that is where review
@@ -260,7 +282,25 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
         if screenshot:
             Path(screenshot).parent.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(screenshot), full_page=True)
-        if hold and not headless:
+        if submit:
+            blanks = missing_required(form, answers, applicant)
+            if blanks or result["failed"]:
+                result["note"] = "not submitted: " + (
+                    f"required fields empty ({'; '.join(blanks)})" if blanks
+                    else f"could not fill {'; '.join(result['failed'])}")
+            else:
+                page.locator('button[type="submit"]').first.click()
+                deadline = time.time() + SUBMIT_WAIT_S
+                while time.time() < deadline and not confirmed():
+                    page.wait_for_timeout(500)
+                result["submitted"] = confirmed()
+                if not result["submitted"]:
+                    result["note"] = ("not submitted: no confirmation after clicking "
+                                      "submit (CAPTCHA, security code or a form "
+                                      "error) — open the link and finish it")
+                if screenshot:
+                    page.screenshot(path=str(screenshot), full_page=True)
+        elif hold and not headless:
             print("  form is filled. Review it, complete the blanks, solve the "
                   "CAPTCHA and submit.\n  Close the browser window when done.")
             while not page.is_closed():

@@ -100,3 +100,15 @@ def test_recording_an_application_marks_applied_only_when_submitted(tmp_path):
     assert store.data["greenhouse:x:1"]["applied"] is True
     assert store.data["greenhouse:x:2"]["applied"] is False
     assert store.stats()["applied"] == 1
+
+
+def test_missing_required_names_what_would_go_out_empty(tmp_path):
+    form = {"questions": apply.flatten_questions(QUESTIONS)}
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF")
+    answers = {"first_name": {"answer": "Asha"}, "question_1": {"answer": ""},
+               "question_2": {"answer": "No"}}
+
+    assert apply.missing_required(form, answers, {"resume_path": str(resume)}) == \
+        ["What is your Notice Period?"]
+    assert "Resume/CV" in apply.missing_required(form, answers, {})

@@ -285,7 +285,9 @@ def cmd_apply(args) -> int:
             try:
                 result = apply_mod.fill_form(
                     form, answers, applicant, headless=args.preview, hold=not args.preview,
-                    screenshot=f"out/apply-{job_id.replace(':', '-')}.png" if args.preview else None)
+                    submit=args.submit and not args.preview,
+                    screenshot=f"out/apply-{job_id.replace(':', '-')}.png"
+                    if args.preview or args.submit else None)
             except RuntimeError as e:
                 print(e)
                 return 1
@@ -352,6 +354,8 @@ def main(argv=None) -> int:
                     help="print the answers, do not open a browser")
     sy.add_argument("--preview", action="store_true",
                     help="fill in a hidden browser and save a screenshot")
+    sy.add_argument("--submit", action="store_true",
+                    help="press submit when every required field is answered")
     sy.add_argument("--send", action="store_true", help="email the summary")
     sy.set_defaults(func=cmd_apply)
 
