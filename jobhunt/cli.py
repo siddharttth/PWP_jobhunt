@@ -243,7 +243,7 @@ def cmd_apply(args) -> int:
     if args.all:
         threshold = float(cfg.get("score_threshold", 7.0))
         job_ids += [jid for jid, row in store.data.items()
-                    if jid.startswith("greenhouse:") and jid not in job_ids
+                    if jid.startswith(("greenhouse:", "lever:")) and jid not in job_ids
                     and (row.get("score") or 0) >= threshold and not row.get("applied")]
     if not job_ids:
         print("nothing to apply to — pass a job_id, or --all for the unapplied shortlist")
@@ -263,7 +263,7 @@ def cmd_apply(args) -> int:
             answers = apply_mod.answer_questions(
                 form["questions"], applicant, profile, form["title"], provider, model,
                 job_description=form["description"])
-        except (LLMError, ValueError) as e:
+        except (LLMError, ValueError, RuntimeError) as e:
             print(f"\n! {job_id}: {e}")
             continue
 
@@ -349,10 +349,10 @@ def main(argv=None) -> int:
     sa.add_argument("job_id")
     sa.set_defaults(func=cmd_applied)
 
-    sy = sub.add_parser("apply", help="pre-fill a greenhouse application; you submit")
+    sy = sub.add_parser("apply", help="fill greenhouse/lever applications in a browser")
     sy.add_argument("job_ids", nargs="*", help="job ids from the digest")
     sy.add_argument("--all", action="store_true",
-                    help="every unapplied greenhouse job at or above score_threshold")
+                    help="every unapplied greenhouse/lever job at or above score_threshold")
     sy.add_argument("--dry-run", action="store_true",
                     help="print the answers, do not open a browser")
     sy.add_argument("--preview", action="store_true",

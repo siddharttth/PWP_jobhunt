@@ -4,9 +4,9 @@ The agent still never submits. It opens the real form in a visible browser,
 fills what it can from applicant.json and the profile, flags what it could not
 answer, and stops. You review, solve the CAPTCHA, and press submit yourself.
 
-Greenhouse only for now: it is the one ATS that publishes its form questions
-(`?questions=true`), and its input ids match the API field names, so filling
-is exact instead of guessed from page text.
+Greenhouse publishes its form questions (`?questions=true`) and its input ids
+match the API field names, so filling is exact. Lever publishes nothing, so
+its questions are read off the apply page itself. Ashby is not supported.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from .providers import Provider
 ANSWER_MAX_TOKENS = 4000
 
 # Answered straight from applicant.json — no model call, no chance of drift.
-DIRECT_FIELDS = ("first_name", "last_name", "email", "phone")
+DIRECT_FIELDS = ("first_name", "last_name", "name", "email", "phone")
 FILE_FIELDS = ("resume",)
 COVER_LETTER = "cover_letter_text"
 JD_CHARS = 6000
@@ -90,11 +90,76 @@ def build_applicant(resume: bytes, provider: Provider, model: str) -> dict:
     return data
 
 
+# Runs in the page. Lever marks a required question with a ✱ in its label.
+_LEVER_SCRAPE = """() => {
+  const rows = [];
+  const add = (label, required, inputs) => {
+    const first = inputs[0];
+    const type = first.tagName === 'SELECT' ? 'select'
+               : first.tagName === 'TEXTAREA' ? 'textarea' : first.type;
+    const options = type === 'select'
+      ? [...first.options].map(o => o.textContent.trim()).filter(t => t && !/^select/i.test(t))
+      : (type === 'radio' || type === 'checkbox') ? inputs.map(i => i.value) : [];
+    rows.push({name: first.name, label, required, type, options});
+  };
+  for (const q of document.querySelectorAll('.application-question')) {
+    const inputs = [...q.querySelectorAll('input, textarea, select')]
+      .filter(i => i.type !== 'hidden' && i.name);
+    if (!inputs.length) continue;
+    const text = (q.querySelector('.application-label') || q).innerText || '';
+    add(text.replace('✱', '').trim(), text.includes('✱') || inputs.some(i => i.required), inputs);
+  }
+  const extra = document.querySelector('textarea[name="comments"]');
+  if (extra && !rows.some(r => r.name === 'comments'))
+    add('Additional information (cover letter)', false, [extra]);
+  return rows;
+}"""
+
+
+def _playwright():
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise RuntimeError(
+            "pip install playwright && python -m playwright install chromium") from None
+    return sync_playwright
+
+
+def _fetch_lever(job_id: str, slug: str, lever_id: str) -> dict:
+    r = requests.get(f"https://api.lever.co/v0/postings/{slug}/{lever_id}",
+                     headers=UA, timeout=TIMEOUT)
+    if r.status_code != 200:
+        raise ValueError(f"lever HTTP {r.status_code} for {job_id} (posting closed?)")
+    body = r.json()
+    apply_url = body.get("applyUrl") or f"https://jobs.lever.co/{slug}/{lever_id}/apply"
+    with _playwright()() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(apply_url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_selector(".application-question", timeout=15000)
+        questions = page.evaluate(_LEVER_SCRAPE)
+        browser.close()
+    lists = " ".join(f"{l.get('text', '')} {l.get('content', '')}"
+                     for l in body.get("lists") or [])
+    return {
+        "ats": "lever",
+        "url": body.get("hostedUrl") or apply_url,
+        "form_url": apply_url,
+        "title": (body.get("text") or "").strip(),
+        "company": slug,
+        "description": f"{body.get('description') or ''} {lists}",
+        "questions": questions,
+        "asks_location": False,
+    }
+
+
 def fetch_form(job_id: str) -> dict:
-    """`greenhouse:<slug>:<id>` -> {url, title, company, description, questions}."""
+    """`<ats>:<slug>:<id>` -> {ats, url, title, company, description, questions}."""
     ats, slug, gh_id = job_id.split(":", 2)
+    if ats == "lever":
+        return _fetch_lever(job_id, slug, gh_id)
     if ats != "greenhouse":
-        raise ValueError(f"assisted apply supports greenhouse only, not {ats!r}")
+        raise ValueError(f"assisted apply supports greenhouse and lever, not {ats!r}")
     r = requests.get(
         f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs/{gh_id}?questions=true",
         headers=UA, timeout=TIMEOUT)
@@ -102,6 +167,7 @@ def fetch_form(job_id: str) -> dict:
         raise ValueError(f"greenhouse HTTP {r.status_code} for {job_id} (posting closed?)")
     body = r.json()
     return {
+        "ats": "greenhouse",
         "url": body.get("absolute_url") or "",
         # `absolute_url` can be the company's own careers page with the form
         # buried in an iframe. The embed URL is always the bare Greenhouse form.
@@ -147,7 +213,8 @@ def answer_questions(questions: list[dict], applicant: dict, profile: dict,
         if name in FILE_FIELDS:
             continue
         if name in DIRECT_FIELDS:
-            value = str(applicant.get(name) or "")
+            full = f"{applicant.get('first_name') or ''} {applicant.get('last_name') or ''}"
+            value = full.strip() if name == "name" else str(applicant.get(name) or "")
             answers[name] = {"answer": value,
                              "source": "details" if value else "needs_input"}
         else:
@@ -203,6 +270,9 @@ def _why_not(page) -> str:
         body = page.locator("body").inner_text(timeout=2000)
     except Exception:
         pass
+    if re.search(r"error verifying your application", body, re.I):
+        return ("the site's CAPTCHA check refused an automated submit — click "
+                "submit yourself in the open window")
     if re.search(r"security code|verification code", body, re.I):
         return ("the form asked for a security code emailed to you — open the "
                 "link, enter the code and submit")
@@ -213,9 +283,9 @@ def _why_not(page) -> str:
         pass
     errors = []
     try:
-        for text in page.locator('[role="alert"], [id$="-error"], [class*="error"]'
-                                 ).all_inner_texts():
-            text = " ".join(text.split())
+        for el in page.locator('[role="alert"], [id$="-error"], [class*="error"]').all():
+            # Forms ship error texts hidden in the page; only shown ones count.
+            text = " ".join(el.inner_text().split()) if el.is_visible() else ""
             if text and text not in errors:
                 errors.append(text)
     except Exception:
@@ -239,11 +309,8 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
     the browser stays open until the human closes it — that is where review
     and submit happen, and `submitted` reports whether they pressed it.
     """
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        raise RuntimeError(
-            "pip install playwright && python -m playwright install chromium") from None
+    sync_playwright = _playwright()
+    lever = form.get("ats") == "lever"
 
     by_name = {q["name"]: q for q in form["questions"]}
     result: dict[str, Any] = {"filled": [], "skipped": [], "failed": [],
@@ -257,11 +324,15 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
         page.on("framenavigated",
                 lambda f: visited.append(f.url) if f == page.main_frame else None)
         page.set_default_timeout(5000)
-        page.goto(form.get("form_url") or form["url"], wait_until="networkidle",
-                  timeout=30000)
+        # Lever's page never goes network-idle (the CAPTCHA widget keeps polling).
+        page.goto(form.get("form_url") or form["url"], timeout=30000,
+                  wait_until="domcontentloaded" if lever else "networkidle")
+        if lever:
+            page.wait_for_selector(".application-question", timeout=15000)
 
         def confirmed() -> bool:
-            if any("confirmation" in u for u in visited):
+            if any("confirmation" in u or u.rstrip("/").endswith("/thanks")
+                   for u in visited):
                 return True
             try:
                 return bool(_CONFIRMED.search(page.locator("body").inner_text(timeout=2000)))
@@ -299,8 +370,13 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
                 result["failed"].append(f"Location (City) ({type(e).__name__})")
 
         resume = Path(str(applicant.get("resume_path") or ""))
-        if resume.is_file() and page.locator("#resume").count():
-            page.locator("#resume").set_input_files(str(resume))
+        resume_box = 'input[name="resume"]' if lever else "#resume"
+        if resume.is_file() and page.locator(resume_box).count():
+            page.locator(resume_box).set_input_files(str(resume))
+            if lever:
+                # Lever parses the upload and overwrites fields with what it
+                # read; let it finish before filling, or the fills are lost.
+                page.wait_for_timeout(4000)
             result["filled"].append("resume")
         else:
             result["skipped"].append("resume")
@@ -310,9 +386,15 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
             if not a["answer"]:
                 result["skipped"].append(q["label"])
                 continue
-            selector = f'[id="{name}"]'
+            selector = f'[name="{name}"]' if lever else f'[id="{name}"]'
             try:
-                if name == COVER_LETTER:
+                if lever and q["type"] in ("radio", "checkbox"):
+                    page.locator(f'{selector}[value="{a["answer"]}"]').check()
+                elif lever and q["type"] == "select":
+                    page.locator(selector).select_option(label=a["answer"])
+                elif lever:
+                    page.locator(selector).fill(a["answer"])
+                elif name == COVER_LETTER:
                     # The textarea only exists after "Enter manually".
                     page.locator('button[data-testid="cover_letter-text"]').click()
                     page.locator(selector).fill(a["answer"])
@@ -335,7 +417,8 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
                     f"required fields empty ({'; '.join(blanks)})" if blanks
                     else f"could not fill {'; '.join(result['failed'])}")
             else:
-                page.locator('button[type="submit"]').first.click()
+                page.locator("#btn-submit" if lever else 'button[type="submit"]'
+                             ).first.click()
                 deadline = time.time() + SUBMIT_WAIT_S
                 while time.time() < deadline and not confirmed():
                     page.wait_for_timeout(500)
@@ -356,7 +439,7 @@ def fill_form(form: dict, answers: dict[str, dict], applicant: dict,
                                 page.wait_for_timeout(700)
                             except Exception:  # window closed mid-wait
                                 break
-                if screenshot:
+                if screenshot and not page.is_closed():
                     page.screenshot(path=str(screenshot), full_page=True)
         elif hold and not headless:
             print("  form is filled. Review it, complete the blanks, solve the "
