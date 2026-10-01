@@ -32,3 +32,6 @@ env/
 .idea/
 .DS_Store
 Thumbs.db
+
+# contact details used by the assisted-apply branch; personal, never commit
+applicant.json
