@@ -2,10 +2,12 @@ name: daily job digest
 
 on:
   schedule:
-    # 08:00 IST, every day. IST is UTC+5:30, so 08:00 IST == 02:30 UTC.
+    # ~08:00 IST, every day. IST is UTC+5:30, so 07:53 IST == 02:23 UTC.
+    # Deliberately off the :00/:30 marks, where GitHub's scheduler is busiest
+    # and most likely to delay or drop a run.
     # GitHub's scheduler is best-effort and can lag by several minutes under
     # load — that is fine for a job digest, do not tighten it.
-    - cron: "30 2 * * *"
+    - cron: "23 2 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
