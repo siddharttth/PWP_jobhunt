@@ -8,8 +8,6 @@ on:
     # GitHub's scheduler is best-effort and can lag by several minutes under
     # load — that is fine for a job digest, do not tighten it.
     - cron: "23 2 * * *"
-    # TEMPORARY, 2026-10-02: one-off test of the scheduler at 12:00 IST. Remove.
-    - cron: "30 6 2 10 *"
   workflow_dispatch:
     inputs:
       dry_run:
